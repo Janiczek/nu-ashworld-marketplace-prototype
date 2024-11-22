@@ -29,7 +29,12 @@
         }
     },
     "test-dependencies": {
-        "direct": {},
-        "indirect": {}
+        "direct": {
+            "elm-explorations/test": "2.2.0",
+            "Janiczek/architecture-test": "2.1.2"
+        },
+        "indirect": {
+            "elm/random": "1.0.0"
+        }
     }
 }
