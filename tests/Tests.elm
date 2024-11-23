@@ -56,9 +56,24 @@ suite =
                             [ \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 1
                             , \m -> m |> playerMoney "A" |> Expect.equal (model_ |> playerMoney "A" |> (\mm -> mm - 100))
                             ]
+            , Test.test "Request for more money than we have is no-op" <|
+                \() ->
+                    model_
+                        |> request "A" 1 Food (round (1 / 0))
+                        |> expectEquivalent model_
             ]
         , Test.describe "Cancellations"
-            [ Test.test "Request then cancel - same as original state" <|
+            [ Test.test "Cancelling a non-existent request is no-op" <|
+                \() ->
+                    model_
+                        |> cancelRequest "A" 1 Food 100
+                        |> expectEquivalent model_
+            , Test.test "Cancelling a non-existent offer is no-op" <|
+                \() ->
+                    model_
+                        |> cancelOffer "A" 1 Food 100
+                        |> expectEquivalent model_
+            , Test.test "Request then cancel - same as original state" <|
                 \() ->
                     model_
                         |> request "A" 1 Food 100
@@ -153,6 +168,19 @@ suite =
                             , \m -> m |> playerMoney "B" |> Expect.equal (model_ |> playerMoney "B" |> (\mm -> mm - 100))
                             , \m -> m |> marketplaceItemCount Food |> Expect.equal 1
                             , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 1
+                            ]
+            , Test.test "Use a part of lowest offer" <|
+                \() ->
+                    model_
+                        |> offer "A" 2 Food 100
+                        |> request "B" 1 Food 100
+                        |> Expect.all
+                            [ \m -> m |> playerItemCount "A" Food |> Expect.equal (model_ |> playerItemCount "A" Food |> (\c -> c - 2))
+                            , \m -> m |> playerItemCount "B" Food |> Expect.equal (model_ |> playerItemCount "B" Food |> (+) 1)
+                            , \m -> m |> playerMoney "A" |> Expect.equal (model_ |> playerMoney "A" |> (+) 100)
+                            , \m -> m |> playerMoney "B" |> Expect.equal (model_ |> playerMoney "B" |> (\mm -> mm - 100))
+                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 1
+                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 0
                             ]
             ]
         , Test.describe "3-party transactions"
