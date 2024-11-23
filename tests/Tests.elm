@@ -364,15 +364,10 @@ suite =
                                         ]
             ]
 
-        {- , Test.describe "Safety tests"
-           [ ATest.invariantTest "if the lowest offer is for N, a request for N-1 will not succeed" testedApp <|
-               \() ->
-                   ()
-           , ATest.invariantTest "if the highest request is for N, an offer for N+1 will not succeed" testedApp <|
-               \() ->
-                   ()
-           ]
-        -}
+        --, Test.describe "Safety tests"
+        --  [ ATest.invariantTest "if the lowest offer is for N, a request for N-1 will not succeed" testedApp <| \() -> ()
+        --  , ATest.invariantTest "if the highest request is for N, an offer for N+1 will not succeed" testedApp <| \() -> ()
+        --  ]
         ]
 
 
