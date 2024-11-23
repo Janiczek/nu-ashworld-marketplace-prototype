@@ -271,385 +271,405 @@ cancelOffer ({ kind, unitPrice, ids } as offer_) clientId model =
 
 putRequest : Request -> ClientId -> Model -> ( Model, Cmd BackendMsg )
 putRequest ({ kind, unitPrice, count } as request) clientId model =
-    let
-        playerMoney : Int
-        playerMoney =
-            moneyForPlayer clientId model.players
+    if count <= 0 then
+        ( model, Cmd.none )
 
-        totalPrice : Int
-        totalPrice =
-            unitPrice * count
-    in
-    if totalPrice > playerMoney then
-        -- Ignore the request, not enough money
+    else if unitPrice <= 0 then
+        ( model, Cmd.none )
+
+    else if not (Dict.member clientId model.players) then
         ( model, Cmd.none )
 
     else
         let
-            remainingMoney : Int
-            remainingMoney =
-                playerMoney - totalPrice
+            playerMoney : Int
+            playerMoney =
+                moneyForPlayer clientId model.players
 
-            updatedPlayers : Dict ClientId Player
-            updatedPlayers =
-                Dict.update clientId
-                    (Maybe.map (\player -> { player | money = remainingMoney }))
-                    model.players
+            totalPrice : Int
+            totalPrice =
+                unitPrice * count
+        in
+        if totalPrice > playerMoney then
+            -- Ignore the request, not enough money
+            ( model, Cmd.none )
 
-            newModel =
-                { model | players = updatedPlayers }
+        else
+            let
+                remainingMoney : Int
+                remainingMoney =
+                    playerMoney - totalPrice
 
-            tryToMatch :
-                Int
-                -> List { ids : List Id, unitPrice : Int }
-                -> Int
-                -> Model
-                -> List (Model -> Cmd BackendMsg)
-                -> ( Model, Cmd BackendMsg )
-            tryToMatch itemsToBuy accBoughtItems accExtraMoney accModel accToCmds =
-                if itemsToBuy == 0 then
-                    finishRequest itemsToBuy accBoughtItems accExtraMoney accModel accToCmds
+                updatedPlayers : Dict ClientId Player
+                updatedPlayers =
+                    Dict.update clientId
+                        (Maybe.map (\player -> { player | money = remainingMoney }))
+                        model.players
 
-                else
-                    case SeqDict.get kind accModel.marketplace of
-                        -- No offers for this item kind!
-                        Nothing ->
-                            finishRequest itemsToBuy accBoughtItems accExtraMoney accModel accToCmds
+                newModel =
+                    { model | players = updatedPlayers }
 
-                        Just { offers } ->
-                            case MinPriorityQueue.smallest offers of
-                                -- No offers for this item kind!
-                                Nothing ->
-                                    finishRequest itemsToBuy accBoughtItems accExtraMoney accModel accToCmds
+                tryToMatch :
+                    Int
+                    -> List { ids : List Id, unitPrice : Int }
+                    -> Int
+                    -> Model
+                    -> List (Model -> Cmd BackendMsg)
+                    -> ( Model, Cmd BackendMsg )
+                tryToMatch itemsToBuy accBoughtItems accExtraMoney accModel accToCmds =
+                    if itemsToBuy == 0 then
+                        finishRequest itemsToBuy accBoughtItems accExtraMoney accModel accToCmds
 
-                                -- We found some offers for this item kind. Let's check if we can meet any of them.
-                                Just lowestOffer ->
-                                    let
-                                        itemsFromOffer : List Id
-                                        itemsFromOffer =
-                                            lowestOffer.ids
+                    else
+                        case SeqDict.get kind accModel.marketplace of
+                            -- No offers for this item kind!
+                            Nothing ->
+                                finishRequest itemsToBuy accBoughtItems accExtraMoney accModel accToCmds
 
-                                        offerItemsCount : Int
-                                        offerItemsCount =
-                                            List.length itemsFromOffer
-                                    in
-                                    if unitPrice < lowestOffer.unitPrice then
-                                        -- I'm buying for less than the lowest offer is willing to sell for.
-                                        -- Can't use this offer, and it was our best bet - any other offer
-                                        -- won't be any better. End here.
+                            Just { offers } ->
+                                case MinPriorityQueue.smallest offers of
+                                    -- No offers for this item kind!
+                                    Nothing ->
                                         finishRequest itemsToBuy accBoughtItems accExtraMoney accModel accToCmds
 
-                                    else
-                                        -- Let's do the exchange.
+                                    -- We found some offers for this item kind. Let's check if we can meet any of them.
+                                    Just lowestOffer ->
                                         let
-                                            itemsBoughtCount : Int
-                                            itemsBoughtCount =
-                                                min offerItemsCount itemsToBuy
+                                            itemsFromOffer : List Id
+                                            itemsFromOffer =
+                                                lowestOffer.ids
 
-                                            idsBought : List Id
-                                            idsBought =
-                                                List.take itemsBoughtCount lowestOffer.ids
-
-                                            finalPrice : Int
-                                            finalPrice =
-                                                lowestOffer.unitPrice
-
-                                            priceDifference : Int
-                                            priceDifference =
-                                                -- I'm willing to pay 300
-                                                -- They're willing to sell for 200
-                                                -- I get 100 back
-                                                unitPrice - finalPrice
-
-                                            totalPriceDifference : Int
-                                            totalPriceDifference =
-                                                priceDifference * itemsBoughtCount
-
-                                            toSellerCmd : Model -> Cmd BackendMsg
-                                            toSellerCmd m =
-                                                Lamdera.sendToFrontend lowestOffer.clientId
-                                                    (YouSold
-                                                        { kind = kind
-                                                        , count = itemsBoughtCount
-                                                        , unitPrice = finalPrice
-                                                        , newOffers = offersForPlayer lowestOffer.clientId m.marketplace
-                                                        , newMoney = moneyForPlayer lowestOffer.clientId m.players
-                                                        }
-                                                    )
-
-                                            newAccModel =
-                                                accModel
-                                                    |> removeFromLowestOffer kind idsBought
-                                                    |> updatePlayer lowestOffer.clientId
-                                                        (\player -> { player | money = player.money + finalPrice * itemsBoughtCount })
+                                            offerItemsCount : Int
+                                            offerItemsCount =
+                                                List.length itemsFromOffer
                                         in
-                                        tryToMatch
-                                            (itemsToBuy - itemsBoughtCount)
-                                            ({ ids = idsBought, unitPrice = finalPrice } :: accBoughtItems)
-                                            (accExtraMoney + totalPriceDifference)
-                                            newAccModel
-                                            (toSellerCmd :: accToCmds)
+                                        if unitPrice < lowestOffer.unitPrice then
+                                            -- I'm buying for less than the lowest offer is willing to sell for.
+                                            -- Can't use this offer, and it was our best bet - any other offer
+                                            -- won't be any better. End here.
+                                            finishRequest itemsToBuy accBoughtItems accExtraMoney accModel accToCmds
 
-            finishRequest :
-                Int
-                -> List { ids : List Id, unitPrice : Int }
-                -> Int
-                -> Model
-                -> List (Model -> Cmd BackendMsg)
-                -> ( Model, Cmd BackendMsg )
-            finishRequest itemsToBuy accBoughtItems accExtraMoney accModel accToCmds =
-                let
-                    modelWithRequestAdded =
-                        if itemsToBuy == 0 then
-                            -- Everything insta-bought!
-                            -- We never added the request, so we don't need to remove it.
-                            -- We've removed/updated the matched offers, so we don't need to do that here.
-                            accModel
+                                        else
+                                            -- Let's do the exchange.
+                                            let
+                                                itemsBoughtCount : Int
+                                                itemsBoughtCount =
+                                                    min offerItemsCount itemsToBuy
 
-                        else
-                            let
-                                -- Leftover request that couldn't be met by the current offers
-                                finalRequest =
-                                    { clientId = clientId
-                                    , count = itemsToBuy
-                                    , unitPrice = unitPrice
-                                    }
-                            in
-                            accModel
-                                |> addRequest kind finalRequest
+                                                idsBought : List Id
+                                                idsBought =
+                                                    List.take itemsBoughtCount lowestOffer.ids
 
-                    modelWithItemsAndLeftoverMoneyAdded =
-                        modelWithRequestAdded
-                            |> updatePlayer clientId
-                                (\player ->
-                                    { money = player.money + accExtraMoney
-                                    , items =
-                                        player.items
-                                            |> addItems kind (List.concatMap .ids accBoughtItems)
-                                    }
-                                )
-                in
-                ( modelWithItemsAndLeftoverMoneyAdded
-                , Cmd.batch <|
-                    Lamdera.sendToFrontend clientId
-                        (YouRequested
-                            { kind = kind
-                            , totalCount = count
-                            , unitPrice = unitPrice
-                            , newRequests = requestsForPlayer clientId modelWithItemsAndLeftoverMoneyAdded.marketplace
-                            , newMoney = moneyForPlayer clientId modelWithItemsAndLeftoverMoneyAdded.players
-                            , newItems = itemsForPlayer clientId modelWithItemsAndLeftoverMoneyAdded.players
-                            , outcome =
-                                if itemsToBuy == count then
-                                    RequestedButNotMet
+                                                finalPrice : Int
+                                                finalPrice =
+                                                    lowestOffer.unitPrice
 
-                                else if itemsToBuy == 0 then
-                                    RequestedAndBoughtEverything
-                                        (accBoughtItems
-                                            |> List.map (\bought -> { unitPrice = bought.unitPrice, count = List.length bought.ids })
-                                        )
+                                                priceDifference : Int
+                                                priceDifference =
+                                                    -- I'm willing to pay 300
+                                                    -- They're willing to sell for 200
+                                                    -- I get 100 back
+                                                    unitPrice - finalPrice
 
-                                else
-                                    RequestedAndBoughtPartially
-                                        (accBoughtItems
-                                            |> List.map (\bought -> { unitPrice = bought.unitPrice, count = List.length bought.ids })
-                                        )
-                            }
-                        )
-                        :: List.map (\toCmd -> toCmd modelWithItemsAndLeftoverMoneyAdded) accToCmds
-                )
-        in
-        tryToMatch request.count [] 0 newModel []
+                                                totalPriceDifference : Int
+                                                totalPriceDifference =
+                                                    priceDifference * itemsBoughtCount
+
+                                                toSellerCmd : Model -> Cmd BackendMsg
+                                                toSellerCmd m =
+                                                    Lamdera.sendToFrontend lowestOffer.clientId
+                                                        (YouSold
+                                                            { kind = kind
+                                                            , count = itemsBoughtCount
+                                                            , unitPrice = finalPrice
+                                                            , newOffers = offersForPlayer lowestOffer.clientId m.marketplace
+                                                            , newMoney = moneyForPlayer lowestOffer.clientId m.players
+                                                            }
+                                                        )
+
+                                                newAccModel =
+                                                    accModel
+                                                        |> removeFromLowestOffer kind idsBought
+                                                        |> updatePlayer lowestOffer.clientId
+                                                            (\player -> { player | money = player.money + finalPrice * itemsBoughtCount })
+                                            in
+                                            tryToMatch
+                                                (itemsToBuy - itemsBoughtCount)
+                                                ({ ids = idsBought, unitPrice = finalPrice } :: accBoughtItems)
+                                                (accExtraMoney + totalPriceDifference)
+                                                newAccModel
+                                                (toSellerCmd :: accToCmds)
+
+                finishRequest :
+                    Int
+                    -> List { ids : List Id, unitPrice : Int }
+                    -> Int
+                    -> Model
+                    -> List (Model -> Cmd BackendMsg)
+                    -> ( Model, Cmd BackendMsg )
+                finishRequest itemsToBuy accBoughtItems accExtraMoney accModel accToCmds =
+                    let
+                        modelWithRequestAdded =
+                            if itemsToBuy == 0 then
+                                -- Everything insta-bought!
+                                -- We never added the request, so we don't need to remove it.
+                                -- We've removed/updated the matched offers, so we don't need to do that here.
+                                accModel
+
+                            else
+                                let
+                                    -- Leftover request that couldn't be met by the current offers
+                                    finalRequest =
+                                        { clientId = clientId
+                                        , count = itemsToBuy
+                                        , unitPrice = unitPrice
+                                        }
+                                in
+                                accModel
+                                    |> addRequest kind finalRequest
+
+                        modelWithItemsAndLeftoverMoneyAdded =
+                            modelWithRequestAdded
+                                |> updatePlayer clientId
+                                    (\player ->
+                                        { money = player.money + accExtraMoney
+                                        , items =
+                                            player.items
+                                                |> addItems kind (List.concatMap .ids accBoughtItems)
+                                        }
+                                    )
+                    in
+                    ( modelWithItemsAndLeftoverMoneyAdded
+                    , Cmd.batch <|
+                        Lamdera.sendToFrontend clientId
+                            (YouRequested
+                                { kind = kind
+                                , totalCount = count
+                                , unitPrice = unitPrice
+                                , newRequests = requestsForPlayer clientId modelWithItemsAndLeftoverMoneyAdded.marketplace
+                                , newMoney = moneyForPlayer clientId modelWithItemsAndLeftoverMoneyAdded.players
+                                , newItems = itemsForPlayer clientId modelWithItemsAndLeftoverMoneyAdded.players
+                                , outcome =
+                                    if itemsToBuy == count then
+                                        RequestedButNotMet
+
+                                    else if itemsToBuy == 0 then
+                                        RequestedAndBoughtEverything
+                                            (accBoughtItems
+                                                |> List.map (\bought -> { unitPrice = bought.unitPrice, count = List.length bought.ids })
+                                            )
+
+                                    else
+                                        RequestedAndBoughtPartially
+                                            (accBoughtItems
+                                                |> List.map (\bought -> { unitPrice = bought.unitPrice, count = List.length bought.ids })
+                                            )
+                                }
+                            )
+                            :: List.map (\toCmd -> toCmd modelWithItemsAndLeftoverMoneyAdded) accToCmds
+                    )
+            in
+            tryToMatch request.count [] 0 newModel []
 
 
 putOffer : Offer -> ClientId -> Model -> ( Model, Cmd BackendMsg )
 putOffer ({ kind, unitPrice, ids } as offer) clientId model =
-    let
-        playerItems : SeqDict ItemKind (List Id)
-        playerItems =
-            itemsForPlayer clientId model.players
+    if List.isEmpty ids then
+        ( model, Cmd.none )
 
-        itemIds : List Id
-        itemIds =
-            playerItems
-                |> SeqDict.get kind
-                |> Maybe.withDefault []
-    in
-    if List.any (\id -> not (List.member id itemIds)) ids then
-        -- Some of the item IDs we want to sell can't be found in our inventory!
-        -- Let's bail out.
+    else if unitPrice <= 0 then
+        ( model, Cmd.none )
+
+    else if not (Dict.member clientId model.players) then
         ( model, Cmd.none )
 
     else
         let
-            remainingItemIds : List Id
-            remainingItemIds =
-                -- TODO perf: sets
-                itemIds
-                    |> List.filter (\id -> not (List.member id ids))
+            playerItems : SeqDict ItemKind (List Id)
+            playerItems =
+                itemsForPlayer clientId model.players
 
-            remainingPlayerItems : SeqDict ItemKind (List Id)
-            remainingPlayerItems =
-                if List.isEmpty remainingItemIds then
-                    playerItems
-                        |> SeqDict.remove kind
+            itemIds : List Id
+            itemIds =
+                playerItems
+                    |> SeqDict.get kind
+                    |> Maybe.withDefault []
+        in
+        if List.any (\id -> not (List.member id itemIds)) ids then
+            -- Some of the item IDs we want to sell can't be found in our inventory!
+            -- Let's bail out.
+            ( model, Cmd.none )
 
-                else
-                    playerItems
-                        |> SeqDict.insert kind remainingItemIds
+        else
+            let
+                remainingItemIds : List Id
+                remainingItemIds =
+                    -- TODO perf: sets
+                    itemIds
+                        |> List.filter (\id -> not (List.member id ids))
 
-            updatedPlayers : Dict ClientId Player
-            updatedPlayers =
-                Dict.update clientId
-                    (Maybe.map (\player -> { player | items = remainingPlayerItems }))
-                    model.players
+                remainingPlayerItems : SeqDict ItemKind (List Id)
+                remainingPlayerItems =
+                    if List.isEmpty remainingItemIds then
+                        playerItems
+                            |> SeqDict.remove kind
 
-            newModel =
-                { model | players = updatedPlayers }
+                    else
+                        playerItems
+                            |> SeqDict.insert kind remainingItemIds
 
-            tryToMatch : List Id -> Int -> List { ids : List Id, unitPrice : Int } -> Model -> List (Model -> Cmd BackendMsg) -> ( Model, Cmd BackendMsg )
-            tryToMatch restOfIds accRevenue accSoldItems accModel accToCmds =
-                if List.isEmpty restOfIds then
-                    finishOffer restOfIds accRevenue accSoldItems accModel accToCmds
+                updatedPlayers : Dict ClientId Player
+                updatedPlayers =
+                    Dict.update clientId
+                        (Maybe.map (\player -> { player | items = remainingPlayerItems }))
+                        model.players
 
-                else
-                    case SeqDict.get kind accModel.marketplace of
-                        -- No requests for this item kind!
-                        Nothing ->
-                            finishOffer restOfIds accRevenue accSoldItems accModel accToCmds
+                newModel =
+                    { model | players = updatedPlayers }
 
-                        Just { requests } ->
-                            case MaxPriorityQueue.largest requests of
-                                -- No requests for this item kind!
-                                Nothing ->
-                                    finishOffer restOfIds accRevenue accSoldItems accModel accToCmds
+                tryToMatch : List Id -> Int -> List { ids : List Id, unitPrice : Int } -> Model -> List (Model -> Cmd BackendMsg) -> ( Model, Cmd BackendMsg )
+                tryToMatch restOfIds accRevenue accSoldItems accModel accToCmds =
+                    if List.isEmpty restOfIds then
+                        finishOffer restOfIds accRevenue accSoldItems accModel accToCmds
 
-                                -- We found some requests for this item kind. Let's check if we can meet any of them.
-                                Just highestRequest ->
-                                    if unitPrice > highestRequest.unitPrice then
-                                        -- I'm selling for more than the highest request is willing to buy for.
-                                        -- Can't use this request, and it was our best bet - any other request
-                                        -- won't be any better. End here.
+                    else
+                        case SeqDict.get kind accModel.marketplace of
+                            -- No requests for this item kind!
+                            Nothing ->
+                                finishOffer restOfIds accRevenue accSoldItems accModel accToCmds
+
+                            Just { requests } ->
+                                case MaxPriorityQueue.largest requests of
+                                    -- No requests for this item kind!
+                                    Nothing ->
                                         finishOffer restOfIds accRevenue accSoldItems accModel accToCmds
 
+                                    -- We found some requests for this item kind. Let's check if we can meet any of them.
+                                    Just highestRequest ->
+                                        if unitPrice > highestRequest.unitPrice then
+                                            -- I'm selling for more than the highest request is willing to buy for.
+                                            -- Can't use this request, and it was our best bet - any other request
+                                            -- won't be any better. End here.
+                                            finishOffer restOfIds accRevenue accSoldItems accModel accToCmds
+
+                                        else
+                                            -- Let's do the exchange.
+                                            let
+                                                itemsToSellCount : Int
+                                                itemsToSellCount =
+                                                    -- MINI-PERF: hold that in the recursive function as an argument
+                                                    List.length restOfIds
+
+                                                itemsSoldCount : Int
+                                                itemsSoldCount =
+                                                    min itemsToSellCount highestRequest.count
+
+                                                ( itemsSold, restOfItems ) =
+                                                    List.Extra.splitAt itemsSoldCount restOfIds
+
+                                                finalPrice : Int
+                                                finalPrice =
+                                                    -- I'm willing to sell for 200
+                                                    -- They're willing to pay 300
+                                                    -- I get 300, not 200
+                                                    -- From the condition above we're guaranteed this price
+                                                    -- is not going to be lower than our minimal price.
+                                                    highestRequest.unitPrice
+
+                                                revenueAdded : Int
+                                                revenueAdded =
+                                                    finalPrice * itemsSoldCount
+
+                                                toBuyerCmd : Model -> Cmd BackendMsg
+                                                toBuyerCmd m =
+                                                    Lamdera.sendToFrontend highestRequest.clientId
+                                                        (YouBought
+                                                            { kind = kind
+                                                            , count = itemsSoldCount
+                                                            , unitPrice = finalPrice
+                                                            , newRequests = requestsForPlayer highestRequest.clientId m.marketplace
+                                                            , newItems = itemsForPlayer highestRequest.clientId m.players
+                                                            , newMoney = moneyForPlayer highestRequest.clientId m.players
+                                                            }
+                                                        )
+
+                                                newAccModel =
+                                                    accModel
+                                                        |> removeFromHighestRequest kind itemsSoldCount
+                                                        |> updatePlayer highestRequest.clientId
+                                                            (\player -> { player | items = addItems kind itemsSold player.items })
+                                            in
+                                            tryToMatch
+                                                restOfItems
+                                                (accRevenue + revenueAdded)
+                                                ({ ids = itemsSold, unitPrice = finalPrice } :: accSoldItems)
+                                                newAccModel
+                                                (toBuyerCmd :: accToCmds)
+
+                finishOffer :
+                    List Id
+                    -> Int
+                    -> List { ids : List Id, unitPrice : Int }
+                    -> Model
+                    -> List (Model -> Cmd BackendMsg)
+                    -> ( Model, Cmd BackendMsg )
+                finishOffer restOfIds accRevenue accSoldItems accModel accToCmds =
+                    let
+                        modelWithOfferAdded =
+                            if restOfIds == [] then
+                                -- Everything insta-sold!
+                                -- We never added the offer, so we don't need to remove it.
+                                -- We've removed/updated the matched requests, so we don't need to do that here.
+                                accModel
+
+                            else
+                                -- Leftover request that couldn't be met by the current offers
+                                let
+                                    finalOffer =
+                                        { clientId = clientId
+                                        , ids = restOfIds
+                                        , unitPrice = unitPrice
+                                        }
+                                in
+                                accModel
+                                    |> addOffer kind finalOffer
+
+                        modelWithMoneyAdded =
+                            modelWithOfferAdded
+                                |> updatePlayer clientId
+                                    (\player -> { player | money = player.money + accRevenue })
+                    in
+                    ( modelWithMoneyAdded
+                    , Cmd.batch <|
+                        Lamdera.sendToFrontend clientId
+                            (YouOffered
+                                { kind = kind
+                                , totalCount = List.length ids
+                                , unitPrice = unitPrice
+                                , newOffers = offersForPlayer clientId modelWithMoneyAdded.marketplace
+                                , newItems = itemsForPlayer clientId modelWithMoneyAdded.players
+                                , newMoney = moneyForPlayer clientId modelWithMoneyAdded.players
+                                , outcome =
+                                    if restOfIds == ids then
+                                        OfferedButNotMet
+
+                                    else if restOfIds == [] then
+                                        OfferedAndSoldEverything
+                                            (accSoldItems
+                                                |> List.map (\sold -> { unitPrice = sold.unitPrice, count = List.length sold.ids })
+                                            )
+
                                     else
-                                        -- Let's do the exchange.
-                                        let
-                                            itemsToSellCount : Int
-                                            itemsToSellCount =
-                                                -- MINI-PERF: hold that in the recursive function as an argument
-                                                List.length restOfIds
-
-                                            itemsSoldCount : Int
-                                            itemsSoldCount =
-                                                min itemsToSellCount highestRequest.count
-
-                                            ( itemsSold, restOfItems ) =
-                                                List.Extra.splitAt itemsSoldCount restOfIds
-
-                                            finalPrice : Int
-                                            finalPrice =
-                                                -- I'm willing to sell for 200
-                                                -- They're willing to pay 300
-                                                -- I get 300, not 200
-                                                -- From the condition above we're guaranteed this price
-                                                -- is not going to be lower than our minimal price.
-                                                highestRequest.unitPrice
-
-                                            revenueAdded : Int
-                                            revenueAdded =
-                                                finalPrice * itemsSoldCount
-
-                                            toBuyerCmd : Model -> Cmd BackendMsg
-                                            toBuyerCmd m =
-                                                Lamdera.sendToFrontend highestRequest.clientId
-                                                    (YouBought
-                                                        { kind = kind
-                                                        , count = itemsSoldCount
-                                                        , unitPrice = finalPrice
-                                                        , newRequests = requestsForPlayer highestRequest.clientId m.marketplace
-                                                        , newItems = itemsForPlayer highestRequest.clientId m.players
-                                                        , newMoney = moneyForPlayer highestRequest.clientId m.players
-                                                        }
-                                                    )
-
-                                            newAccModel =
-                                                accModel
-                                                    |> removeFromHighestRequest kind itemsSoldCount
-                                                    |> updatePlayer highestRequest.clientId
-                                                        (\player -> { player | items = addItems kind itemsSold player.items })
-                                        in
-                                        tryToMatch
-                                            restOfItems
-                                            (accRevenue + revenueAdded)
-                                            ({ ids = itemsSold, unitPrice = finalPrice } :: accSoldItems)
-                                            newAccModel
-                                            (toBuyerCmd :: accToCmds)
-
-            finishOffer :
-                List Id
-                -> Int
-                -> List { ids : List Id, unitPrice : Int }
-                -> Model
-                -> List (Model -> Cmd BackendMsg)
-                -> ( Model, Cmd BackendMsg )
-            finishOffer restOfIds accRevenue accSoldItems accModel accToCmds =
-                let
-                    modelWithOfferAdded =
-                        if restOfIds == [] then
-                            -- Everything insta-sold!
-                            -- We never added the offer, so we don't need to remove it.
-                            -- We've removed/updated the matched requests, so we don't need to do that here.
-                            accModel
-
-                        else
-                            -- Leftover request that couldn't be met by the current offers
-                            let
-                                finalOffer =
-                                    { clientId = clientId
-                                    , ids = restOfIds
-                                    , unitPrice = unitPrice
-                                    }
-                            in
-                            accModel
-                                |> addOffer kind finalOffer
-
-                    modelWithMoneyAdded =
-                        modelWithOfferAdded
-                            |> updatePlayer clientId
-                                (\player -> { player | money = player.money + accRevenue })
-                in
-                ( modelWithMoneyAdded
-                , Cmd.batch <|
-                    Lamdera.sendToFrontend clientId
-                        (YouOffered
-                            { kind = kind
-                            , totalCount = List.length ids
-                            , unitPrice = unitPrice
-                            , newOffers = offersForPlayer clientId modelWithMoneyAdded.marketplace
-                            , newItems = itemsForPlayer clientId modelWithMoneyAdded.players
-                            , newMoney = moneyForPlayer clientId modelWithMoneyAdded.players
-                            , outcome =
-                                if restOfIds == ids then
-                                    OfferedButNotMet
-
-                                else if restOfIds == [] then
-                                    OfferedAndSoldEverything
-                                        (accSoldItems
-                                            |> List.map (\sold -> { unitPrice = sold.unitPrice, count = List.length sold.ids })
-                                        )
-
-                                else
-                                    OfferedAndSoldPartially
-                                        (accSoldItems
-                                            |> List.map (\sold -> { unitPrice = sold.unitPrice, count = List.length sold.ids })
-                                        )
-                            }
-                        )
-                        :: List.map (\toCmd -> toCmd modelWithMoneyAdded) accToCmds
-                )
-        in
-        tryToMatch offer.ids 0 [] newModel []
+                                        OfferedAndSoldPartially
+                                            (accSoldItems
+                                                |> List.map (\sold -> { unitPrice = sold.unitPrice, count = List.length sold.ids })
+                                            )
+                                }
+                            )
+                            :: List.map (\toCmd -> toCmd modelWithMoneyAdded) accToCmds
+                    )
+            in
+            tryToMatch offer.ids 0 [] newModel []
 
 
 addOffer : ItemKind -> { clientId : ClientId, unitPrice : Int, ids : List Id } -> Model -> Model

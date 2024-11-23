@@ -23,11 +23,30 @@ type Msg
 model_ : BackendModel
 model_ =
     Backend.initModel
-        |> update (BackendMsg (ClientConnected "" "A"))
-        |> update (BackendMsg (ClientConnected "" "B"))
-        |> update (BackendMsg (ClientConnected "" "C"))
-        |> update (BackendMsg (ClientConnected "" "D"))
-        |> update (BackendMsg (ClientConnected "" "E"))
+        |> guaranteePlayers
+
+
+guaranteePlayers : BackendModel -> BackendModel
+guaranteePlayers model =
+    let
+        wantedPlayers =
+            List.range 1 5
+                |> List.map String.fromInt
+
+        neededPlayers =
+            model.players
+                |> Dict.keys
+                |> Set.fromList
+                |> Set.diff (Set.fromList wantedPlayers)
+    in
+    Set.foldl
+        (\clientId accModel ->
+            update
+                (BackendMsg (ClientConnected "" clientId))
+                accModel
+        )
+        model
+        neededPlayers
 
 
 suite : Test
@@ -43,152 +62,152 @@ suite =
             [ Test.test "Offer 1x Food 100ea" <|
                 \() ->
                     model_
-                        |> offer "A" 1 Food 100
+                        |> offer "1" 1 Food 100
                         |> Expect.all
-                            [ \m -> m |> playerItemCount "A" Food |> Expect.equal (model_ |> playerItemCount "A" Food |> (\c -> c - 1))
-                            , \m -> m |> marketplaceItemCount Food |> Expect.equal (model_ |> marketplaceItemCount Food |> (+) 1)
+                            [ \m -> m |> playerItemCount "1" Food |> Expect.equal (model_ |> playerItemCount "1" Food |> (\c -> c - 1)) |> Expect.onFail "Player 1 didn't lose an item"
+                            , \m -> m |> marketplaceItemCount Food |> Expect.equal (model_ |> marketplaceItemCount Food |> (+) 1) |> Expect.onFail "Item didn't enter the marketplace"
                             ]
             , Test.test "Request 1x Food 100ea" <|
                 \() ->
                     model_
-                        |> request "A" 1 Food 100
+                        |> request "1" 1 Food 100
                         |> Expect.all
-                            [ \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 1
-                            , \m -> m |> playerMoney "A" |> Expect.equal (model_ |> playerMoney "A" |> (\mm -> mm - 100))
+                            [ \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 1 |> Expect.onFail "Request didn't enter the marketplace"
+                            , \m -> m |> playerMoney "1" |> Expect.equal (model_ |> playerMoney "1" |> (\mm -> mm - 100)) |> Expect.onFail "Player 1 didn't lose money"
                             ]
             , Test.test "Request for more money than we have is no-op" <|
                 \() ->
                     model_
-                        |> request "A" 1 Food (round (1 / 0))
+                        |> request "1" 1 Food (round (1 / 0))
                         |> expectEquivalent model_
             ]
         , Test.describe "Cancellations"
             [ Test.test "Cancelling a non-existent request is no-op" <|
                 \() ->
                     model_
-                        |> cancelRequest "A" 1 Food 100
+                        |> cancelRequest "1" 1 Food 100
                         |> expectEquivalent model_
             , Test.test "Cancelling a non-existent offer is no-op" <|
                 \() ->
                     model_
-                        |> cancelOffer "A" 1 Food 100
+                        |> cancelOffer "1" 1 Food 100
                         |> expectEquivalent model_
             , Test.test "Request then cancel - same as original state" <|
                 \() ->
                     model_
-                        |> request "A" 1 Food 100
-                        |> cancelRequest "A" 1 Food 100
+                        |> request "1" 1 Food 100
+                        |> cancelRequest "1" 1 Food 100
                         |> expectEquivalent model_
             , Test.test "Offer then cancel - same as original state" <|
                 \() ->
                     model_
-                        |> offer "A" 1 Food 100
-                        |> cancelOffer "A" 1 Food 100
+                        |> offer "1" 1 Food 100
+                        |> cancelOffer "1" 1 Food 100
                         |> expectEquivalent model_
             ]
         , Test.describe "2-party transactions"
             [ Test.test "Offer 1x @ 100 then Request 1x @ 100" <|
                 \() ->
                     model_
-                        |> offer "A" 1 Food 100
-                        |> request "B" 1 Food 100
+                        |> offer "1" 1 Food 100
+                        |> request "2" 1 Food 100
                         |> Expect.all
-                            [ \m -> m |> playerItemCount "A" Food |> Expect.equal (model_ |> playerItemCount "A" Food |> (\c -> c - 1))
-                            , \m -> m |> playerItemCount "B" Food |> Expect.equal (model_ |> playerItemCount "B" Food |> (+) 1)
-                            , \m -> m |> playerMoney "A" |> Expect.equal (model_ |> playerMoney "A" |> (+) 100)
-                            , \m -> m |> playerMoney "B" |> Expect.equal (model_ |> playerMoney "B" |> (\mm -> mm - 100))
-                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 0
-                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 0
+                            [ \m -> m |> playerItemCount "1" Food |> Expect.equal (model_ |> playerItemCount "1" Food |> (\c -> c - 1)) |> Expect.onFail "Player 1 didn't lose an item"
+                            , \m -> m |> playerItemCount "2" Food |> Expect.equal (model_ |> playerItemCount "2" Food |> (+) 1) |> Expect.onFail "Player 2 didn't gain 1 item"
+                            , \m -> m |> playerMoney "1" |> Expect.equal (model_ |> playerMoney "1" |> (+) 100) |> Expect.onFail "Player 1 didn't gain money"
+                            , \m -> m |> playerMoney "2" |> Expect.equal (model_ |> playerMoney "2" |> (\mm -> mm - 100)) |> Expect.onFail "Player 2 didn't lose money"
+                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 0 |> Expect.onFail "Item didn't leave the marketplace"
+                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 0 |> Expect.onFail "Request didn't leave the marketplace"
                             ]
             , Test.test "Offer 1x @ 100 then Request 1x @ 200" <|
                 \() ->
                     -- trade takes place at 100
                     model_
-                        |> offer "A" 1 Food 100
-                        |> request "B" 1 Food 200
+                        |> offer "1" 1 Food 100
+                        |> request "2" 1 Food 200
                         |> Expect.all
-                            [ \m -> m |> playerItemCount "A" Food |> Expect.equal (model_ |> playerItemCount "A" Food |> (\c -> c - 1))
-                            , \m -> m |> playerItemCount "B" Food |> Expect.equal (model_ |> playerItemCount "B" Food |> (+) 1)
-                            , \m -> m |> playerMoney "A" |> Expect.equal (model_ |> playerMoney "A" |> (+) 100)
-                            , \m -> m |> playerMoney "B" |> Expect.equal (model_ |> playerMoney "B" |> (\mm -> mm - 100))
-                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 0
-                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 0
+                            [ \m -> m |> playerItemCount "1" Food |> Expect.equal (model_ |> playerItemCount "1" Food |> (\c -> c - 1)) |> Expect.onFail "Player 1 didn't lose an item"
+                            , \m -> m |> playerItemCount "2" Food |> Expect.equal (model_ |> playerItemCount "2" Food |> (+) 1) |> Expect.onFail "Player 2 didn't gain 1 item"
+                            , \m -> m |> playerMoney "1" |> Expect.equal (model_ |> playerMoney "1" |> (+) 100) |> Expect.onFail "Player 1 didn't gain money"
+                            , \m -> m |> playerMoney "2" |> Expect.equal (model_ |> playerMoney "2" |> (\mm -> mm - 100)) |> Expect.onFail "Player 2 didn't lose money"
+                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 0 |> Expect.onFail "Item didn't leave the marketplace"
+                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 0 |> Expect.onFail "Request didn't leave the marketplace"
                             ]
             , Test.test "Offer 1x @ 200 then Request 1x @ 100" <|
                 \() ->
                     -- no trade takes place
                     model_
-                        |> offer "A" 1 Food 200
-                        |> request "B" 1 Food 100
+                        |> offer "1" 1 Food 200
+                        |> request "2" 1 Food 100
                         |> Expect.all
-                            [ \m -> m |> playerItemCount "A" Food |> Expect.equal (model_ |> playerItemCount "A" Food |> (\c -> c - 1))
-                            , \m -> m |> playerItemCount "B" Food |> Expect.equal (model_ |> playerItemCount "B" Food)
-                            , \m -> m |> playerMoney "A" |> Expect.equal (model_ |> playerMoney "A")
-                            , \m -> m |> playerMoney "B" |> Expect.equal (model_ |> playerMoney "B" |> (\mm -> mm - 100))
-                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 1
-                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 1
+                            [ \m -> m |> playerItemCount "1" Food |> Expect.equal (model_ |> playerItemCount "1" Food |> (\c -> c - 1)) |> Expect.onFail "Player 1 didn't lose an item"
+                            , \m -> m |> playerItemCount "2" Food |> Expect.equal (model_ |> playerItemCount "2" Food) |> Expect.onFail "Player 2 didn't keep their item"
+                            , \m -> m |> playerMoney "1" |> Expect.equal (model_ |> playerMoney "1") |> Expect.onFail "Player 1 didn't keep their money"
+                            , \m -> m |> playerMoney "2" |> Expect.equal (model_ |> playerMoney "2" |> (\mm -> mm - 100)) |> Expect.onFail "Player 2 didn't lose money"
+                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 1 |> Expect.onFail "Item didn't leave the marketplace"
+                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 1 |> Expect.onFail "Request didn't leave the marketplace"
                             ]
             , Test.test "Request 1x @ 100 then Offer 1x @ 100" <|
                 \() ->
                     model_
-                        |> request "B" 1 Food 100
-                        |> offer "A" 1 Food 100
+                        |> request "2" 1 Food 100
+                        |> offer "1" 1 Food 100
                         |> Expect.all
-                            [ \m -> m |> playerItemCount "A" Food |> Expect.equal (model_ |> playerItemCount "A" Food |> (\c -> c - 1))
-                            , \m -> m |> playerItemCount "B" Food |> Expect.equal (model_ |> playerItemCount "B" Food |> (+) 1)
-                            , \m -> m |> playerMoney "A" |> Expect.equal (model_ |> playerMoney "A" |> (+) 100)
-                            , \m -> m |> playerMoney "B" |> Expect.equal (model_ |> playerMoney "B" |> (\mm -> mm - 100))
-                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 0
-                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 0
+                            [ \m -> m |> playerItemCount "1" Food |> Expect.equal (model_ |> playerItemCount "1" Food |> (\c -> c - 1)) |> Expect.onFail "Player 1 didn't lose an item"
+                            , \m -> m |> playerItemCount "2" Food |> Expect.equal (model_ |> playerItemCount "2" Food |> (+) 1) |> Expect.onFail "Player 2 didn't gain 1 item"
+                            , \m -> m |> playerMoney "1" |> Expect.equal (model_ |> playerMoney "1" |> (+) 100) |> Expect.onFail "Player 1 didn't gain money"
+                            , \m -> m |> playerMoney "2" |> Expect.equal (model_ |> playerMoney "2" |> (\mm -> mm - 100)) |> Expect.onFail "Player 2 didn't lose money"
+                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 0 |> Expect.onFail "Item didn't leave the marketplace"
+                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 0 |> Expect.onFail "Request didn't leave the marketplace"
                             ]
             , Test.test "Request 1x @ 200 then Offer 1x @ 100" <|
                 \() ->
                     -- trade takes place at 200
                     model_
-                        |> request "B" 1 Food 200
-                        |> offer "A" 1 Food 100
+                        |> request "2" 1 Food 200
+                        |> offer "1" 1 Food 100
                         |> Expect.all
-                            [ \m -> m |> playerItemCount "A" Food |> Expect.equal (model_ |> playerItemCount "A" Food |> (\c -> c - 1))
-                            , \m -> m |> playerItemCount "B" Food |> Expect.equal (model_ |> playerItemCount "B" Food |> (+) 1)
-                            , \m -> m |> playerMoney "A" |> Expect.equal (model_ |> playerMoney "A" |> (+) 200)
-                            , \m -> m |> playerMoney "B" |> Expect.equal (model_ |> playerMoney "B" |> (\mm -> mm - 200))
-                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 0
-                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 0
+                            [ \m -> m |> playerItemCount "1" Food |> Expect.equal (model_ |> playerItemCount "1" Food |> (\c -> c - 1)) |> Expect.onFail "Player 1 didn't lose an item"
+                            , \m -> m |> playerItemCount "2" Food |> Expect.equal (model_ |> playerItemCount "2" Food |> (+) 1) |> Expect.onFail "Player 2 didn't gain 1 item"
+                            , \m -> m |> playerMoney "1" |> Expect.equal (model_ |> playerMoney "1" |> (+) 200) |> Expect.onFail "Player 1 didn't gain money"
+                            , \m -> m |> playerMoney "2" |> Expect.equal (model_ |> playerMoney "2" |> (\mm -> mm - 200)) |> Expect.onFail "Player 2 didn't lose money"
+                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 0 |> Expect.onFail "Item didn't leave the marketplace"
+                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 0 |> Expect.onFail "Request didn't leave the marketplace"
                             ]
             , Test.test "Request 1x @ 100 then Offer 1x @ 200" <|
                 \() ->
                     -- no trade takes place
                     model_
-                        |> request "B" 1 Food 100
-                        |> offer "A" 1 Food 200
+                        |> request "2" 1 Food 100
+                        |> offer "1" 1 Food 200
                         |> Expect.all
-                            [ \m -> m |> playerItemCount "A" Food |> Expect.equal (model_ |> playerItemCount "A" Food |> (\c -> c - 1))
-                            , \m -> m |> playerItemCount "B" Food |> Expect.equal (model_ |> playerItemCount "B" Food)
-                            , \m -> m |> playerMoney "A" |> Expect.equal (model_ |> playerMoney "A")
-                            , \m -> m |> playerMoney "B" |> Expect.equal (model_ |> playerMoney "B" |> (\mm -> mm - 100))
-                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 1
-                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 1
+                            [ \m -> m |> playerItemCount "1" Food |> Expect.equal (model_ |> playerItemCount "1" Food |> (\c -> c - 1)) |> Expect.onFail "Player 1 didn't lose an item"
+                            , \m -> m |> playerItemCount "2" Food |> Expect.equal (model_ |> playerItemCount "2" Food) |> Expect.onFail "Player 2 didn't keep their item"
+                            , \m -> m |> playerMoney "1" |> Expect.equal (model_ |> playerMoney "1") |> Expect.onFail "Player 1 didn't keep their money"
+                            , \m -> m |> playerMoney "2" |> Expect.equal (model_ |> playerMoney "2" |> (\mm -> mm - 100)) |> Expect.onFail "Player 2 didn't lose money"
+                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 1 |> Expect.onFail "Item didn't leave the marketplace"
+                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 1 |> Expect.onFail "Request didn't leave the marketplace"
                             ]
             , Test.test "Use a part of lowest offer" <|
                 \() ->
                     model_
-                        |> offer "A" 2 Food 100
-                        |> request "B" 1 Food 100
+                        |> offer "1" 2 Food 100
+                        |> request "2" 1 Food 100
                         |> Expect.all
-                            [ \m -> m |> playerItemCount "A" Food |> Expect.equal (model_ |> playerItemCount "A" Food |> (\c -> c - 2))
-                            , \m -> m |> playerItemCount "B" Food |> Expect.equal (model_ |> playerItemCount "B" Food |> (+) 1)
-                            , \m -> m |> playerMoney "A" |> Expect.equal (model_ |> playerMoney "A" |> (+) 100)
-                            , \m -> m |> playerMoney "B" |> Expect.equal (model_ |> playerMoney "B" |> (\mm -> mm - 100))
-                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 1
-                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 0
+                            [ \m -> m |> playerItemCount "1" Food |> Expect.equal (model_ |> playerItemCount "1" Food |> (\c -> c - 2)) |> Expect.onFail "Player 1 didn't lose 2 items"
+                            , \m -> m |> playerItemCount "2" Food |> Expect.equal (model_ |> playerItemCount "2" Food |> (+) 1) |> Expect.onFail "Player 2 didn't gain 1 item"
+                            , \m -> m |> playerMoney "1" |> Expect.equal (model_ |> playerMoney "1" |> (+) 100) |> Expect.onFail "Player 1 didn't gain money"
+                            , \m -> m |> playerMoney "2" |> Expect.equal (model_ |> playerMoney "2" |> (\mm -> mm - 100)) |> Expect.onFail "Player 2 didn't lose money"
+                            , \m -> m |> marketplaceItemCount Food |> Expect.equal 1 |> Expect.onFail "Item didn't leave the marketplace"
+                            , \m -> m |> marketplaceItemRequestCount Food |> Expect.equal 0 |> Expect.onFail "Request didn't leave the marketplace"
                             ]
             ]
         , Test.describe "3-party transactions"
             [ Test.describe "Offer 1x @ 100, Offer 1x @ 100, Request 2x @ 100 - everything gets sold"
                 (List.Extra.permutations
-                    [ ( "A", offer "A" 1 Food 100 )
-                    , ( "B", offer "B" 1 Food 100 )
-                    , ( "C", request "C" 2 Food 100 )
+                    [ ( "1", offer "1" 1 Food 100 )
+                    , ( "2", offer "2" 1 Food 100 )
+                    , ( "3", request "3" 2 Food 100 )
                     ]
                     |> List.map
                         (\permutation ->
@@ -203,17 +222,229 @@ suite =
                                         model_
                                         fns
                                         |> Expect.all
-                                            [ \m -> m |> playerItemCount "A" Food |> Expect.equal (model_ |> playerItemCount "A" Food |> (\c -> c - 1))
-                                            , \m -> m |> playerItemCount "B" Food |> Expect.equal (model_ |> playerItemCount "B" Food |> (\c -> c - 1))
-                                            , \m -> m |> playerItemCount "C" Food |> Expect.equal (model_ |> playerItemCount "C" Food |> (+) 2)
-                                            , \m -> m |> playerMoney "A" |> Expect.equal (model_ |> playerMoney "A" |> (+) 100)
-                                            , \m -> m |> playerMoney "B" |> Expect.equal (model_ |> playerMoney "A" |> (+) 100)
-                                            , \m -> m |> playerMoney "C" |> Expect.equal (model_ |> playerMoney "B" |> (\mm -> mm - 200))
+                                            [ \m -> m |> playerItemCount "1" Food |> Expect.equal (model_ |> playerItemCount "1" Food |> (\c -> c - 1)) |> Expect.onFail "Player 1 didn't lose an item"
+                                            , \m -> m |> playerItemCount "2" Food |> Expect.equal (model_ |> playerItemCount "2" Food |> (\c -> c - 1)) |> Expect.onFail "Player 2 didn't lose an item"
+                                            , \m -> m |> playerItemCount "3" Food |> Expect.equal (model_ |> playerItemCount "3" Food |> (+) 2) |> Expect.onFail "Player 3 didn't gain 2 items"
+                                            , \m -> m |> playerMoney "1" |> Expect.equal (model_ |> playerMoney "1" |> (+) 100) |> Expect.onFail "Player 1 didn't gain money"
+                                            , \m -> m |> playerMoney "2" |> Expect.equal (model_ |> playerMoney "2" |> (+) 100) |> Expect.onFail "Player 2 didn't gain money"
+                                            , \m -> m |> playerMoney "3" |> Expect.equal (model_ |> playerMoney "3" |> (\mm -> mm - 200)) |> Expect.onFail "Player 3 didn't lose money"
                                             ]
                         )
                 )
             ]
+        , Test.describe "Liveness tests"
+            [ ATest.invariantTest "if an offer exists for N, a request for N will succeed" testedApp <|
+                \_ _ newModel ->
+                    let
+                        newModelWithPlayers =
+                            newModel
+                                |> guaranteePlayers
+                                |> guaranteeEnoughMoney
+                    in
+                    case anyOffer newModelWithPlayers of
+                        Nothing ->
+                            Expect.pass
+
+                        Just ( kind, offer_ ) ->
+                            let
+                                seller =
+                                    offer_.clientId
+
+                                buyer =
+                                    otherClientId seller
+
+                                count =
+                                    List.length offer_.ids
+                            in
+                            newModelWithPlayers
+                                |> request buyer count kind offer_.unitPrice
+                                |> Expect.all
+                                    [ \m -> m |> playerItemCount buyer kind |> Expect.equal (newModelWithPlayers |> playerItemCount buyer kind |> (+) count) |> Expect.onFail "Buyer didn't receive the item"
+                                    , \m -> m |> playerMoney buyer |> Expect.equal (newModelWithPlayers |> playerMoney buyer |> (\mm -> mm - (count * offer_.unitPrice))) |> Expect.onFail "Buyer didn't pay for the item"
+                                    , \m -> m |> marketplaceItemCount kind |> Expect.equal (newModelWithPlayers |> marketplaceItemCount kind |> (\c -> c - count)) |> Expect.onFail "Item didn't leave the marketplace"
+                                    , \m -> m |> playerMoney seller |> Expect.equal (newModelWithPlayers |> playerMoney seller |> (+) (count * offer_.unitPrice)) |> Expect.onFail "Seller didn't receive money"
+                                    ]
+            , ATest.invariantTest "if an offer exists for N, a request for N+1 will succeed for N" testedApp <|
+                \_ _ newModel ->
+                    let
+                        newModelWithPlayers =
+                            newModel
+                                |> guaranteePlayers
+                                |> guaranteeEnoughMoney
+                    in
+                    case anyOffer newModelWithPlayers of
+                        Nothing ->
+                            Expect.pass
+
+                        Just ( kind, offer_ ) ->
+                            let
+                                seller =
+                                    offer_.clientId
+
+                                buyer =
+                                    otherClientId seller
+
+                                count =
+                                    List.length offer_.ids
+                            in
+                            newModelWithPlayers
+                                |> request buyer count kind (offer_.unitPrice + 1)
+                                |> Expect.all
+                                    [ \m -> m |> playerItemCount buyer kind |> Expect.equal (newModelWithPlayers |> playerItemCount buyer kind |> (+) count) |> Expect.onFail "Buyer didn't receive the item"
+                                    , \m -> m |> playerMoney buyer |> Expect.equal (newModelWithPlayers |> playerMoney buyer |> (\mm -> mm - (count * offer_.unitPrice))) |> Expect.onFail "Buyer didn't pay for the item"
+                                    , \m -> m |> marketplaceItemCount kind |> Expect.equal (newModelWithPlayers |> marketplaceItemCount kind |> (\c -> c - count)) |> Expect.onFail "Item didn't leave the marketplace"
+                                    , \m -> m |> playerMoney seller |> Expect.equal (newModelWithPlayers |> playerMoney seller |> (+) (count * offer_.unitPrice)) |> Expect.onFail "Seller didn't receive money"
+                                    ]
+            , ATest.invariantTest "if a request exists for N, an offer for N will succeed" testedApp <|
+                \_ _ newModel ->
+                    case anyRequest newModel of
+                        Nothing ->
+                            Expect.pass
+
+                        Just ( kind, request_ ) ->
+                            let
+                                buyer =
+                                    request_.clientId
+
+                                seller =
+                                    otherClientId buyer
+
+                                count =
+                                    request_.count
+
+                                newModelWithPlayers =
+                                    newModel
+                                        |> guaranteePlayers
+                                        |> sudoAddItems count kind seller
+                            in
+                            newModelWithPlayers
+                                |> offer seller count kind request_.unitPrice
+                                |> Expect.all
+                                    [ \m -> m |> playerItemCount seller kind |> Expect.equal (newModelWithPlayers |> playerItemCount seller kind |> (\c -> c - count)) |> Expect.onFail "Seller didn't lose the item"
+                                    , \m -> m |> playerMoney seller |> Expect.equal (newModelWithPlayers |> playerMoney seller |> (+) (count * request_.unitPrice)) |> Expect.onFail "Seller didn't receive money"
+                                    , \m -> m |> marketplaceItemRequestCount kind |> Expect.equal (newModelWithPlayers |> marketplaceItemRequestCount kind |> (\c -> c - count)) |> Expect.onFail "Item request didn't leave the marketplace"
+                                    , \m -> m |> playerItemCount buyer kind |> Expect.equal (newModelWithPlayers |> playerItemCount buyer kind |> (+) count) |> Expect.onFail "Buyer didn't get the item"
+                                    ]
+            , ATest.invariantTest "if a request exists for N money, an offer for N-1 money will succeed for N money" testedApp <|
+                \_ _ newModel ->
+                    case anyRequest newModel of
+                        Nothing ->
+                            Expect.pass
+
+                        Just ( kind, request_ ) ->
+                            if request_.unitPrice == 1 then
+                                Expect.pass
+
+                            else
+                                let
+                                    buyer =
+                                        request_.clientId
+
+                                    seller =
+                                        otherClientId buyer
+
+                                    count =
+                                        request_.count
+
+                                    unitPrice =
+                                        request_.unitPrice
+
+                                    newModelWithPlayers =
+                                        newModel
+                                            |> guaranteePlayers
+                                            |> sudoAddItems count kind seller
+                                in
+                                newModelWithPlayers
+                                    |> offer seller count kind (unitPrice - 1)
+                                    |> Expect.all
+                                        [ \m -> m |> playerItemCount seller kind |> Expect.equal (newModelWithPlayers |> playerItemCount seller kind |> (\c -> c - count)) |> Expect.onFail "Seller didn't lose the item"
+                                        , \m -> m |> playerMoney seller |> Expect.equal (newModelWithPlayers |> playerMoney seller |> (+) (count * unitPrice)) |> Expect.onFail "Seller didn't receive money"
+                                        , \m -> m |> marketplaceItemRequestCount kind |> Expect.equal (newModelWithPlayers |> marketplaceItemRequestCount kind |> (\c -> c - count)) |> Expect.onFail "Item request didn't leave the marketplace"
+                                        , \m -> m |> playerItemCount buyer kind |> Expect.equal (newModelWithPlayers |> playerItemCount buyer kind |> (+) count) |> Expect.onFail "Buyer didn't get the item"
+                                        ]
+            ]
+
+        {- , Test.describe "Safety tests"
+           [ ATest.invariantTest "if the lowest offer is for N, a request for N-1 will not succeed" testedApp <|
+               \() ->
+                   ()
+           , ATest.invariantTest "if the highest request is for N, an offer for N+1 will not succeed" testedApp <|
+               \() ->
+                   ()
+           ]
+        -}
         ]
+
+
+guaranteeEnoughMoney : BackendModel -> BackendModel
+guaranteeEnoughMoney model =
+    { model
+        | players =
+            model.players
+                |> Dict.map (\_ p -> { p | money = 1000000 })
+    }
+
+
+sudoAddItems : Int -> ItemKind -> ClientId -> BackendModel -> BackendModel
+sudoAddItems count itemKind clientId model =
+    let
+        addedItems =
+            List.range model.nextId (model.nextId + count - 1)
+    in
+    { model
+        | players =
+            model.players
+                |> Dict.update clientId
+                    (Maybe.map
+                        (\p ->
+                            { p
+                                | items =
+                                    p.items
+                                        |> SeqDict.update itemKind
+                                            (\maybeIds ->
+                                                case maybeIds of
+                                                    Nothing ->
+                                                        Just addedItems
+
+                                                    Just ids ->
+                                                        Just (ids ++ addedItems)
+                                            )
+                            }
+                        )
+                    )
+        , nextId = model.nextId + count
+    }
+
+
+otherClientId : ClientId -> ClientId
+otherClientId clientId =
+    if clientId == "1" then
+        "2"
+
+    else
+        "1"
+
+
+anyOffer : BackendModel -> Maybe ( ItemKind, { clientId : ClientId, ids : List Id, unitPrice : Int } )
+anyOffer model =
+    model.marketplace
+        |> SeqDict.toList
+        |> List.Extra.findMap
+            (\( kind, market ) ->
+                MinPriorityQueue.smallest market.offers
+                    |> Maybe.map (Tuple.pair kind)
+            )
+
+
+anyRequest : BackendModel -> Maybe ( ItemKind, { clientId : ClientId, count : Int, unitPrice : Int } )
+anyRequest model =
+    model.marketplace
+        |> SeqDict.toList
+        |> List.Extra.findMap
+            (\( kind, market ) ->
+                MaxPriorityQueue.largest market.requests
+                    |> Maybe.map (Tuple.pair kind)
+            )
 
 
 suiteForMsg : Fuzzer ToBackend -> List Test
@@ -291,7 +522,7 @@ offerFuzzer =
 
 uniqueListFuzzer : Fuzzer comparable -> Fuzzer (List comparable)
 uniqueListFuzzer itemFuzzer =
-    Fuzz.list itemFuzzer
+    Fuzz.listOfLengthBetween 1 3 itemFuzzer
         |> Fuzz.map (Set.fromList >> Set.toList)
 
 
@@ -373,24 +604,16 @@ offer clientId count itemKind unitPrice model =
 
 request : ClientId -> Int -> ItemKind -> Int -> BackendModel -> BackendModel
 request clientId count itemKind unitPrice model =
-    let
-        money =
-            playerMoney clientId model
-    in
-    if money < unitPrice * count then
-        Debug.todo "[offer] Test tried to request things the player didn't have money for"
-
-    else
-        model
-            |> update
-                (ToBackendMsg clientId
-                    (PutRequest
-                        { kind = itemKind
-                        , unitPrice = unitPrice
-                        , count = count
-                        }
-                    )
+    model
+        |> update
+            (ToBackendMsg clientId
+                (PutRequest
+                    { kind = itemKind
+                    , unitPrice = unitPrice
+                    , count = count
+                    }
                 )
+            )
 
 
 cancelRequest : ClientId -> Int -> ItemKind -> Int -> BackendModel -> BackendModel
@@ -424,22 +647,18 @@ cancelOffer clientId count itemKind unitPrice model =
                             )
                     )
                 |> Maybe.map (.ids >> List.take count)
+                |> Maybe.withDefault []
     in
-    case ids of
-        Nothing ->
-            Debug.todo "[offer] Test tried to cancel offer that didn't exist"
-
-        Just ids_ ->
-            model
-                |> update
-                    (ToBackendMsg clientId
-                        (CancelOffer
-                            { kind = itemKind
-                            , unitPrice = unitPrice
-                            , ids = ids_
-                            }
-                        )
-                    )
+    model
+        |> update
+            (ToBackendMsg clientId
+                (CancelOffer
+                    { kind = itemKind
+                    , unitPrice = unitPrice
+                    , ids = ids
+                    }
+                )
+            )
 
 
 playerMoney : ClientId -> BackendModel -> Int
@@ -539,8 +758,8 @@ expectEquivalent : BackendModel -> BackendModel -> Expectation
 expectEquivalent old new =
     new
         |> Expect.all
-            [ \m -> marketplaceTotalItemsCount m |> Expect.equal (marketplaceTotalItemsCount old)
-            , \m -> marketplaceTotalMoneyAmount m |> Expect.equal (marketplaceTotalMoneyAmount old)
-            , \m -> playersTotalItemsCount m |> Expect.equal (playersTotalItemsCount old)
-            , \m -> playersTotalMoneyAmount m |> Expect.equal (playersTotalMoneyAmount old)
+            [ \m -> marketplaceTotalItemsCount m |> Expect.equal (marketplaceTotalItemsCount old) |> Expect.onFail "Marketplace items count mismatch"
+            , \m -> marketplaceTotalMoneyAmount m |> Expect.equal (marketplaceTotalMoneyAmount old) |> Expect.onFail "Marketplace money amount mismatch"
+            , \m -> playersTotalItemsCount m |> Expect.equal (playersTotalItemsCount old) |> Expect.onFail "Players items count mismatch"
+            , \m -> playersTotalMoneyAmount m |> Expect.equal (playersTotalMoneyAmount old) |> Expect.onFail "Players money amount mismatch"
             ]
