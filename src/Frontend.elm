@@ -96,6 +96,7 @@ updateFromBackend msg model =
             ( { model
                 | myOffers = youOffered.newOffers
                 , myItems = youOffered.newItems
+                , myMoney = youOffered.newMoney
                 , message =
                     case youOffered.outcome of
                         OfferedAndSoldEverything sold ->
@@ -188,7 +189,7 @@ updateFromBackend msg model =
             , Cmd.none
             )
 
-        YouRequested { kind, totalCount, unitPrice, newRequests, newMoney, outcome } ->
+        YouRequested { kind, totalCount, unitPrice, newRequests, newMoney, newItems, outcome } ->
             let
                 totalPrice : Int
                 totalPrice =
@@ -197,6 +198,7 @@ updateFromBackend msg model =
             ( { model
                 | myRequests = newRequests
                 , myMoney = newMoney
+                , myItems = newItems
                 , message =
                     case outcome of
                         RequestedButNotMet ->
@@ -219,12 +221,17 @@ updateFromBackend msg model =
                                 totalRealPrice : Int
                                 totalRealPrice =
                                     List.sum (List.map (\x -> x.count * x.unitPrice) bought)
+
+                                averageUnitPrice : Int
+                                averageUnitPrice =
+                                    totalRealPrice // totalItemsBought
                             in
-                            "You requested: {COUNT}x {KIND} and were able to immediately buy {TOTALITEMSBOUGHT}x {KIND} for an average of {TOTALREALPRICE}. You have {COUNTLEFT}x {KIND} left to buy, with a maximum price of {UNITPRICE}. Your money has been reserved from your account."
+                            "You requested: {COUNT}x {KIND} and were able to immediately buy {TOTALITEMSBOUGHT}x {KIND} for an average of {AVERAGEUNITPRICE} each = total {TOTALREALPRICE}. You have {COUNTLEFT}x {KIND} left to buy, with a maximum price of {UNITPRICE}. Your money has been reserved from your account."
                                 |> String.replace "{COUNT}" (String.fromInt totalCount)
                                 |> String.replace "{KIND}" (Debug.toString kind)
                                 |> String.replace "{UNITPRICE}" (String.fromInt unitPrice)
                                 |> String.replace "{TOTALITEMSBOUGHT}" (String.fromInt totalItemsBought)
+                                |> String.replace "{AVERAGEUNITPRICE}" (String.fromInt averageUnitPrice)
                                 |> String.replace "{TOTALREALPRICE}" (String.fromInt totalRealPrice)
                                 |> String.replace "{COUNTLEFT}" (String.fromInt totalItemsLeft)
 
@@ -242,7 +249,7 @@ updateFromBackend msg model =
                                 |> String.replace "{COUNT}" (String.fromInt totalCount)
                                 |> String.replace "{KIND}" (Debug.toString kind)
                                 |> String.replace "{TOTALREALPRICE}" (String.fromInt totalRealPrice)
-                                |> String.replace "{AVERAGEUNITPRICE}" (String.fromInt (totalPrice // totalItemsBought))
+                                |> String.replace "{AVERAGEUNITPRICE}" (String.fromInt (totalRealPrice // totalItemsBought))
               }
             , Cmd.none
             )
@@ -265,6 +272,7 @@ updateFromBackend msg model =
             ( { model
                 | myRequests = newRequests
                 , myItems = newItems
+                , myMoney = newMoney
                 , message =
                     "You bought: {COUNT}x {KIND} for {UNITPRICE} each = total {TOTALPRICE}. The items have been added to your inventory.{MONEY}"
                         |> String.replace "{COUNT}" (String.fromInt count)
@@ -364,11 +372,33 @@ view model =
             ]
         , H.div []
             [ H.h2 [] [ H.text "My Offers" ]
-            , H.text <| Debug.toString model.myOffers
+            , H.ul []
+                (List.map
+                    (\offer ->
+                        H.li []
+                            [ H.text <| Debug.toString offer
+                            , H.button
+                                [ HE.onClick (CancelOfferClicked offer) ]
+                                [ H.text "X" ]
+                            ]
+                    )
+                    model.myOffers
+                )
             ]
         , H.div []
             [ H.h2 [] [ H.text "My Requests" ]
-            , H.text <| Debug.toString model.myRequests
+            , H.ul []
+                (List.map
+                    (\request ->
+                        H.li []
+                            [ H.text <| Debug.toString request
+                            , H.button
+                                [ HE.onClick (CancelRequestClicked request) ]
+                                [ H.text "X" ]
+                            ]
+                    )
+                    model.myRequests
+                )
             , H.div []
                 [ H.h3 [] [ H.text "Make a Request" ]
                 , H.div []

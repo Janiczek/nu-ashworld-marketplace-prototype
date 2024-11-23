@@ -1,4 +1,4 @@
-module Backend exposing (initModel, update, updateFromFrontend)
+module Backend exposing (app, initModel, update, updateFromFrontend)
 
 import Dict exposing (Dict)
 import Lamdera exposing (ClientId, SessionId)
